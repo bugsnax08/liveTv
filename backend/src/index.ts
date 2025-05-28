@@ -19,6 +19,9 @@ const io = new Server(httpServer, {
 app.use(cors());
 app.use(express.json());
 
+// Serve static files from the public directory
+app.use('/hls', express.static(path.join(__dirname, '../public/hls')));
+
 // Mediasoup workers
 let mediasoupWorker: mediasoup.types.Worker;
 let router: mediasoup.types.Router;
@@ -169,6 +172,11 @@ function startHlsTranscoding(streamId: string) {
     fs.mkdirSync(outputDir, { recursive: true });
   }
 
+  // Clean up any existing files
+  fs.readdirSync(outputDir).forEach(file => {
+    fs.unlinkSync(path.join(outputDir, file));
+  });
+
   ffmpeg()
     .input('pipe:0')
     .inputOptions([
@@ -187,6 +195,9 @@ function startHlsTranscoding(streamId: string) {
     .output(`${outputDir}/playlist.m3u8`)
     .on('error', (err) => {
       console.error('FFmpeg error:', err);
+    })
+    .on('end', () => {
+      console.log('FFmpeg transcoding finished');
     })
     .run();
 }

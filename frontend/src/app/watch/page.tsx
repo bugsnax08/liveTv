@@ -15,6 +15,10 @@ const WatchPage = () => {
     const hls = new Hls({
       enableWorker: true,
       lowLatencyMode: true,
+      debug: true,
+      xhrSetup: function(xhr) {
+        xhr.withCredentials = false;
+      }
     });
 
     hls.loadSource('http://localhost:3008/hls/stream/playlist.m3u8');
@@ -28,6 +32,7 @@ const WatchPage = () => {
     });
 
     hls.on(Hls.Events.ERROR, (event, data) => {
+      console.error('HLS Error:', data);
       if (data.fatal) {
         switch (data.type) {
           case Hls.ErrorTypes.NETWORK_ERROR:
