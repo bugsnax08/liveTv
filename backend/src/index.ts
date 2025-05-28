@@ -4,8 +4,8 @@ import { Server } from 'socket.io';
 import * as mediasoup from 'mediasoup';
 import cors from 'cors';
 import path from 'path';
-import ffmpeg from 'fluent-ffmpeg';
 import fs from 'fs';
+import { startHlsTranscoding } from './transcoder';
 
 const app = express();
 const httpServer = createServer(app);
@@ -28,6 +28,7 @@ let router: mediasoup.types.Router;
 let producerTransports: Map<string, mediasoup.types.WebRtcTransport> = new Map();
 let producers: Map<string, mediasoup.types.Producer> = new Map();
 let consumers: Map<string, mediasoup.types.Consumer> = new Map();
+let ffmpegProcesses: Map<string, any> = new Map();
 
 // Initialize mediasoup
 async function initializeMediasoup() {
@@ -108,9 +109,15 @@ io.on('connection', async (socket) => {
     const producer = await transport.produce({ kind, rtpParameters });
     producers.set(socket.id, producer);
 
-    // Start HLS transcoding for viewers
+    // Start HLS transcoding for video producers
     if (kind === 'video') {
-      startHlsTranscoding(socket.id);
+      const port = 10000 + Math.floor(Math.random() * 100); // Random port between 10000-10099
+      const ffmpeg = startHlsTranscoding({
+        streamId: socket.id,
+        port,
+        codec: 'VP8'
+      });
+      ffmpegProcesses.set(socket.id, ffmpeg);
     }
 
     callback({ id: producer.id });
@@ -159,48 +166,20 @@ io.on('connection', async (socket) => {
 
   socket.on('disconnect', () => {
     console.log('Client disconnected:', socket.id);
+    
+    // Clean up FFmpeg process
+    const ffmpeg = ffmpegProcesses.get(socket.id);
+    if (ffmpeg) {
+      ffmpeg.kill();
+      ffmpegProcesses.delete(socket.id);
+    }
+
+    // Clean up mediasoup resources
     producerTransports.delete(socket.id);
     producers.delete(socket.id);
     consumers.delete(socket.id);
   });
 });
-
-// HLS transcoding function
-function startHlsTranscoding(streamId: string) {
-  const outputDir = path.join(__dirname, '../public/hls', streamId);
-  if (!fs.existsSync(outputDir)) {
-    fs.mkdirSync(outputDir, { recursive: true });
-  }
-
-  // Clean up any existing files
-  fs.readdirSync(outputDir).forEach(file => {
-    fs.unlinkSync(path.join(outputDir, file));
-  });
-
-  ffmpeg()
-    .input('pipe:0')
-    .inputOptions([
-      '-f webm',
-      '-i pipe:0',
-    ])
-    .outputOptions([
-      '-c:v libx264',
-      '-c:a aac',
-      '-f hls',
-      '-hls_time 2',
-      '-hls_list_size 3',
-      '-hls_flags delete_segments',
-      '-hls_segment_filename', `${outputDir}/%d.ts`,
-    ])
-    .output(`${outputDir}/playlist.m3u8`)
-    .on('error', (err) => {
-      console.error('FFmpeg error:', err);
-    })
-    .on('end', () => {
-      console.log('FFmpeg transcoding finished');
-    })
-    .run();
-}
 
 // Initialize mediasoup and start server
 initializeMediasoup().then(() => {
